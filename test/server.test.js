@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { request } from 'node:http';
+import { Agent, request } from 'node:http';
 import { createHttpServer } from '../src/http/server.js';
 
 /**
@@ -35,7 +35,7 @@ test('listens on an ephemeral port and serves requests', async () => {
   await assert.rejects(get(port), /ECONNREFUSED/);
 });
 
-test('close waits for an in-flight request and marks its response Connection: close', async () => {
+test('close waits for an in-flight request', async () => {
   /** @type {() => void} */
   let release = () => {};
   /** @type {() => void} */
@@ -63,7 +63,7 @@ test('close waits for an in-flight request and marks its response Connection: cl
   assert.equal(closed, true);
 });
 
-test('requests arriving during shutdown are told to close the connection', async () => {
+test('a keep-alive connection that is busy at shutdown is closed right after its response', async () => {
   /** @type {Array<() => void>} */
   const releases = [];
   const managed = createHttpServer(async (req, res) => {
@@ -72,8 +72,6 @@ test('requests arriving during shutdown are told to close the connection', async
   });
   const { port } = await managed.listen(0);
 
-  // A keep-alive connection that is busy when shutdown starts.
-  const { Agent } = await import('node:http');
   const agent = new Agent({ keepAlive: true, maxSockets: 1 });
   const slow = new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port, path: '/slow', agent }, (res) => {
@@ -84,10 +82,13 @@ test('requests arriving during shutdown are told to close the connection', async
     req.end();
   });
   while (releases.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+  const startedAt = Date.now();
   const closing = managed.close();
   releases[0]();
-  await slow;
+  assert.equal(await slow, 'close');
   await closing;
+  // Well below the 5 s keep-alive timeout the connection would otherwise sit out.
+  assert.ok(Date.now() - startedAt < 2000, `shutdown took ${Date.now() - startedAt} ms`);
   agent.destroy();
 });
 
