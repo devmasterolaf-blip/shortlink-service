@@ -7,6 +7,7 @@ import { systemClock } from '../clock.js';
 import { readJson } from './body.js';
 import { createContext, queryToObject, sendJson } from './context.js';
 import { authenticate, errorBoundary, rateLimit, requestLog, silentLogger } from './middleware.js';
+import { registerRedirectRoutes } from './redirect.js';
 import { Router, compose } from './router.js';
 
 /**
@@ -76,6 +77,8 @@ export function createApp(options) {
   router.get('/api/links/:code/stats', ...guard('stats:read'), (ctx) => {
     sendJson(ctx.res, 200, service.getStats(ctx.params.code, queryToObject(ctx.query)));
   });
+
+  registerRedirectRoutes(router, service);
 
   const pipeline = compose([
     requestLog(logger, clock),
