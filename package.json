@@ -1,0 +1,24 @@
+{
+  "name": "shortlink-service",
+  "version": "0.1.0",
+  "description": "Self-hosted URL shortener HTTP service with no runtime dependencies",
+  "type": "module",
+  "license": "MIT",
+  "author": "devmasterolaf-blip",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "shortlink": "bin/shortlink.js"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test --test-concurrency=2 \"test/**/*.test.js\""
+  },
+  "keywords": [
+    "url-shortener",
+    "http",
+    "self-hosted"
+  ]
+}
