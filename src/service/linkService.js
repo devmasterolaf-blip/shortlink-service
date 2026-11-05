@@ -20,14 +20,12 @@ import {
   rejectUnknownFields,
 } from './linkInput.js';
 import { parseListQuery, runListQuery } from './listQuery.js';
+import { linkStatus } from './linkStatus.js';
 
 /**
  * @typedef {import('../storage/memoryStore.js').Link} Link
  * @typedef {import('../storage/memoryStore.js').LinkStore} LinkStore
- */
-
-/**
- * @typedef {'active' | 'disabled' | 'expired' | 'exhausted'} LinkStatus
+ * @typedef {import('./linkStatus.js').LinkStatus} LinkStatus
  */
 
 /**
@@ -82,18 +80,6 @@ const UPDATE_FIELDS = Object.freeze(CREATE_FIELDS.filter((field) => field !== 'a
  */
 function iso(ms) {
   return ms === null ? null : new Date(ms).toISOString();
-}
-
-/**
- * @param {Link} link
- * @param {number} now
- * @returns {LinkStatus}
- */
-export function linkStatus(link, now) {
-  if (!link.enabled) return 'disabled';
-  if (link.expiresAt !== null && link.expiresAt <= now) return 'expired';
-  if (link.maxClicks !== null && link.clicks >= link.maxClicks) return 'exhausted';
-  return 'active';
 }
 
 export class LinkService {

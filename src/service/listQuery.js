@@ -6,7 +6,7 @@
 
 import { ValidationError } from '../errors.js';
 import { parseTimestamp } from './linkInput.js';
-import { linkStatus } from './linkService.js';
+import { linkStatus } from './linkStatus.js';
 
 /** @typedef {import('../storage/memoryStore.js').Link} Link */
 
@@ -34,7 +34,7 @@ const QUERY_FIELDS = Object.freeze([
  * @property {{ field: string, descending: boolean }} sort
  * @property {string[]} tags a link must carry all of them
  * @property {boolean} [enabled]
- * @property {import('./linkService.js').LinkStatus} [status]
+ * @property {import('./linkStatus.js').LinkStatus} [status]
  * @property {string} [q] case-insensitive substring of the code or the URL
  * @property {number} [createdAfter] inclusive lower bound, epoch milliseconds
  * @property {number} [createdBefore] exclusive upper bound, epoch milliseconds
