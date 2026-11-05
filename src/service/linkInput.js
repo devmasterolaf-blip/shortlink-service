@@ -129,11 +129,12 @@ export function parsePassword(value) {
 
 /**
  * @param {unknown} value
+ * @param {string} [field] name used in the error message
  * @returns {boolean}
  */
-export function parseEnabled(value) {
+export function parseEnabled(value, field = 'enabled') {
   if (typeof value !== 'boolean') {
-    throw new ValidationError('enabled must be true or false', { field: 'enabled' });
+    throw new ValidationError(`${field} must be true or false`, { field });
   }
   return value;
 }
