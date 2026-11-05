@@ -51,6 +51,13 @@ test('queryToObject rejects repeated parameters', async () => {
   assert.deepEqual(err.details, { parameter: 'page' });
 });
 
+test('queryToObject keeps parameters named like Object.prototype members', async () => {
+  const result = queryToObject(new URLSearchParams('__proto__=x&constructor=y'));
+  assert.deepEqual(Object.keys(result), ['__proto__', 'constructor']);
+  assert.equal(Object.getPrototypeOf(result), Object.prototype);
+  await expectError(() => queryToObject(new URLSearchParams('__proto__=x&__proto__=y')), 'duplicate_parameter', 400);
+});
+
 test('readBody concatenates chunks up to the limit', async () => {
   const body = await readBody(fakeRequest({ chunks: ['hel', 'lo'] }), 5);
   assert.equal(body.toString(), 'hello');

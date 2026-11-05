@@ -80,18 +80,20 @@ export function createContext(req, res, options = {}) {
  * @returns {Record<string, string>}
  */
 export function queryToObject(query) {
-  /** @type {Record<string, string>} */
-  const result = {};
+  // Collected in a Map first: assigning `result['__proto__']` on a plain
+  // object would silently drop the parameter instead of storing it.
+  /** @type {Map<string, string>} */
+  const seen = new Map();
   for (const [name, value] of query) {
-    if (Object.hasOwn(result, name)) {
+    if (seen.has(name)) {
       throw new ValidationError(`Query parameter "${name}" was given more than once`, {
         code: 'duplicate_parameter',
         details: { parameter: name },
       });
     }
-    result[name] = value;
+    seen.set(name, value);
   }
-  return result;
+  return Object.fromEntries(seen);
 }
 
 /**
