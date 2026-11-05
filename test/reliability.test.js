@@ -118,7 +118,7 @@ test('a write that fails leaves memory and the API consistent with the file', as
   assert.equal(failed.status, 500);
   assert.equal(failed.json.error.code, 'internal_error');
   assert.ok(!failed.text.includes('ENOSPC'));
-  // Redirects of existing links still work, but the click cannot be recorded.
+  // A redirect has to record its click, so it fails as well while writes fail.
   assert.equal((await api('GET', '/saved', { key: null })).status, 500);
   fs.writeSync = realWrite;
 
