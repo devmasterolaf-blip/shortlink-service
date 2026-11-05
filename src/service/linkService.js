@@ -19,6 +19,7 @@ import {
   parseTags,
   rejectUnknownFields,
 } from './linkInput.js';
+import { parseListQuery, runListQuery } from './listQuery.js';
 
 /**
  * @typedef {import('../storage/memoryStore.js').Link} Link
@@ -247,6 +248,17 @@ export class LinkService {
     // The link may have been deleted while the password was being hashed.
     this.requireLink(code);
     return this.toPublic(this.store.updateLink(code, patch));
+  }
+
+  /**
+   * List links with filtering, sorting and pagination.
+   * @param {Record<string, string | undefined>} [rawQuery] see `parseListQuery`
+   * @returns {import('./listQuery.js').Page<PublicLink>}
+   */
+  listLinks(rawQuery = {}) {
+    const query = parseListQuery(rawQuery);
+    const page = runListQuery(this.store.listLinks(), query, this.clock.now());
+    return { ...page, items: page.items.map((link) => this.toPublic(link)) };
   }
 
   /**
