@@ -4,11 +4,20 @@
  * contract, so the API, the CLI and the importer all share one behaviour.
  */
 
-import { AppError, ConflictError, NotFoundError } from '../errors.js';
+import {
+  AppError,
+  ConflictError,
+  ForbiddenError,
+  GoneError,
+  NotFoundError,
+  UnauthorizedError,
+} from '../errors.js';
 import { systemClock } from '../clock.js';
 import { DEFAULT_RESERVED_WORDS, isReservedWord, validateAlias } from '../codes/alias.js';
 import { normalizeUrl } from '../url/validate.js';
-import { DEFAULT_SCRYPT_COST, hashPassword } from '../security/password.js';
+import { DEFAULT_SCRYPT_COST, hashPassword, verifyPassword } from '../security/password.js';
+import { referrerSource, userAgentFamily } from '../analytics/classify.js';
+import { VisitorHasher } from '../analytics/visitors.js';
 import {
   assertPlainObject,
   parseEnabled,
@@ -21,6 +30,7 @@ import {
 } from './linkInput.js';
 import { parseListQuery, runListQuery } from './listQuery.js';
 import { linkStatus } from './linkStatus.js';
+import { buildStatsReport } from './statsReport.js';
 
 /**
  * @typedef {import('../storage/memoryStore.js').Link} Link
@@ -59,6 +69,26 @@ import { linkStatus } from './linkStatus.js';
  * @property {301 | 302 | 307} [defaultRedirectType]
  * @property {import('../security/password.js').ScryptCost} [passwordCost]
  * @property {number} [maxCodeAttempts] proposals tried before giving up on generating a code
+ * @property {VisitorHasher} [visitorHasher]
+ * @property {number} [permanentMaxAge] seconds a 301 may be cached (default one day)
+ */
+
+/**
+ * What the redirect endpoint knows about the incoming request.
+ * @typedef {object} ResolveRequest
+ * @property {string} [password] password supplied by the visitor
+ * @property {string} [ip]
+ * @property {string} [referrer] raw `Referer` header
+ * @property {string} [userAgent] raw `User-Agent` header
+ * @property {boolean} [countClick] false to resolve without recording a click (default true)
+ */
+
+/**
+ * @typedef {object} Resolution
+ * @property {string} code
+ * @property {string} url destination
+ * @property {301 | 302 | 307} status
+ * @property {string} cacheControl value for the `Cache-Control` response header
  */
 
 const CREATE_FIELDS = Object.freeze([
@@ -73,6 +103,28 @@ const CREATE_FIELDS = Object.freeze([
   'redirectType',
 ]);
 const UPDATE_FIELDS = Object.freeze(CREATE_FIELDS.filter((field) => field !== 'alias'));
+
+/**
+ * Cache policy of a redirect response.
+ *
+ * Only an unconditional permanent redirect may be cached by shared caches.
+ * A permanent link that expires may be cached privately until it does, and
+ * anything that depends on per-request state (password, click budget) or
+ * is temporary must not be cached at all, so every visit reaches the
+ * service.
+ * @param {Link} link
+ * @param {number} now
+ * @param {number} permanentMaxAge seconds
+ * @returns {string}
+ */
+export function cacheControlFor(link, now, permanentMaxAge) {
+  if (link.redirectType !== 301 || link.passwordHash !== null || link.maxClicks !== null) return 'no-store';
+  if (link.expiresAt !== null) {
+    const secondsLeft = Math.max(0, Math.floor((link.expiresAt - now) / 1000));
+    return `private, max-age=${Math.min(permanentMaxAge, secondsLeft)}`;
+  }
+  return `public, max-age=${permanentMaxAge}`;
+}
 
 /**
  * @param {number | null} ms
@@ -94,6 +146,8 @@ export class LinkService {
     this.defaultRedirectType = options.defaultRedirectType ?? 302;
     this.passwordCost = options.passwordCost ?? DEFAULT_SCRYPT_COST;
     this.maxCodeAttempts = options.maxCodeAttempts ?? 12;
+    this.visitorHasher = options.visitorHasher ?? new VisitorHasher();
+    this.permanentMaxAge = options.permanentMaxAge ?? 86_400;
   }
 
   /**
@@ -254,5 +308,75 @@ export class LinkService {
     if (!this.store.deleteLink(code)) {
       throw new NotFoundError(`No link with code "${code}"`, { code: 'link_not_found' });
     }
+  }
+
+  /**
+   * Throw unless `link` can currently be followed.
+   * @param {Link | undefined} link
+   * @param {string} code
+   * @returns {Link}
+   */
+  assertFollowable(link, code) {
+    // A disabled link is indistinguishable from one that never existed.
+    if (!link || !link.enabled) {
+      throw new NotFoundError(`No link with code "${code}"`, { code: 'link_not_found' });
+    }
+    const status = linkStatus(link, this.clock.now());
+    if (status === 'expired') throw new GoneError('This link has expired', { code: 'link_expired' });
+    if (status === 'exhausted') {
+      throw new GoneError('This link has reached its click limit', { code: 'link_exhausted' });
+    }
+    return link;
+  }
+
+  /**
+   * Resolve a short code for a visitor: enforce the link's rules, record
+   * the click and say where to redirect.
+   * @param {string} code
+   * @param {ResolveRequest} [request]
+   * @returns {Promise<Resolution>}
+   */
+  async resolve(code, request = {}) {
+    let link = this.assertFollowable(this.store.getLink(code), code);
+    if (link.passwordHash !== null) {
+      if (request.password === undefined || request.password === '') {
+        throw new UnauthorizedError('This link is password protected', { code: 'password_required' });
+      }
+      if (!(await verifyPassword(request.password, link.passwordHash))) {
+        throw new ForbiddenError('Incorrect password', { code: 'password_incorrect' });
+      }
+      // Verification is asynchronous: re-check so that concurrent visitors
+      // cannot overshoot the click budget or use a link changed meanwhile.
+      link = this.assertFollowable(this.store.getLink(code), code);
+    }
+
+    const now = this.clock.now();
+    if (request.countClick !== false) {
+      this.store.recordClick({
+        code,
+        at: now,
+        referrer: referrerSource(request.referrer),
+        userAgent: userAgentFamily(request.userAgent),
+        visitor: this.visitorHasher.hash(request.ip ?? '', now),
+      });
+    }
+    return {
+      code,
+      url: link.url,
+      status: link.redirectType,
+      cacheControl: cacheControlFor(link, now, this.permanentMaxAge),
+    };
+  }
+
+  /**
+   * @param {string} code
+   * @param {Record<string, string | undefined>} [rawQuery] optional `from` / `to` days (YYYY-MM-DD)
+   * @returns {import('./statsReport.js').StatsReport}
+   */
+  getStats(code, rawQuery = {}) {
+    const link = this.requireLink(code);
+    const stats = this.store.getStats(code);
+    if (!stats) throw new NotFoundError(`No link with code "${code}"`, { code: 'link_not_found' });
+    return buildStatsReport(link, stats, rawQuery);
   }
 }
